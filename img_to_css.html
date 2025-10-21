@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Image to CSS Converter</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font:15px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#0b0f18;color:#e8ecff;display:grid;place-items:center;min-height:100vh}
+  h1{padding:1.2rem 1rem;text-align:center;color:#cfd6ff;text-decoration:underline}
+
+  main{width:min(1100px,96vw);display:grid;gap:16px;grid-template-columns:1fr 420px}
+  @media (max-width:980px){ main{grid-template-columns:1fr} }
+
+  /* PREVIEW + VIEWPORT */
+  .processor{grid-column:1/2;background:#121628;border-radius:12px;padding:16px;box-shadow:0 20px 60px -25px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06)}
+  .status{margin-top:8px;color:#a7b0ff}
+  .viewport{
+    --vw: min(720px, 86vw);
+    --vh: 420px;
+    width:var(--vw);height:var(--vh);
+    background:#0a0d18;border-radius:10px;overflow:auto;
+    outline:1px dashed rgba(255,255,255,.12);position:relative;margin-inline:auto;
+  }
+  .root{position:relative}
+  .pixel{position:absolute;width:1px;height:1px}
+
+  /* PANNELLO DX */
+  .side{grid-column:2/3;background:#121628;border-radius:12px;padding:14px;display:grid;gap:10px;box-shadow:0 20px 60px -25px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  label{font-weight:700;color:#cdd2ff}
+  input[type="file"]{display:block;width:100%;padding:10px;border-radius:10px;background:#2b3150;color:#fff;cursor:pointer;border:none}
+  input[type="number"]{width:110px;padding:.45rem .6rem;border-radius:8px;border:1px solid #2b3150;background:#0e1224;color:#e8ecff}
+
+  .codes{display:grid;gap:12px;margin-top:6px}
+  .codebox{position:relative}
+  .codebox h3{font-size:.92rem;color:#bfc6ff;margin-bottom:4px}
+  textarea{width:100%;min-height:120px;padding:.6rem;border-radius:10px;border:1px solid #2b3150;background:#0e1224;color:#cfe3ff;font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical}
+  .btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+  button{all:unset;cursor:pointer;background:#2b3150;color:#e8ecff;padding:.5rem .8rem;border-radius:8px;box-shadow:0 8px 16px -10px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06)}
+  button:active{transform:translateY(1px) scale(.99)}
+
+  canvas{display:none}
+</style>
+</head>
+<body>
+  <h1>Image to CSS Converter</h1>
+
+  <main>
+    <!-- PREVIEW -->
+    <section class="processor">
+      <div class="viewport">
+        <div class="root" id="root"></div>
+      </div>
+      <p class="status" id="status">Scegli un'immagine (meglio ≤ 200×200)</p>
+    </section>
+
+    <!-- CONTROLLI / OUTPUT -->
+    <aside class="side">
+      <div class="row">
+        <label for="input-file">Immagine:</label>
+        <input type="file" id="input-file" accept="image/*">
+      </div>
+      <div class="row">
+        <label for="max-side">Ridimensiona max lato (px):</label>
+        <input type="number" id="max-side" value="200" min="20" step="10">
+      </div>
+      <!-- NUOVO: toolbar azioni -->
+      <div class="row">
+        <button id="new-image">Nuova immagine</button>
+        <button id="reset">Reset</button>
+      </div>
+
+      <div class="codes">
+        <div class="codebox">
+          <h3>Snippet HTML (solo il mosaico)</h3>
+          <textarea id="out-html" spellcheck="false" placeholder="&lt;div class='root'&gt;…&lt;/div&gt;"></textarea>
+          <div class="btns">
+            <button id="copy-html">Copy Snippet</button>
+          </div>
+        </div>
+
+        <div class="codebox">
+          <h3>CSS base per lo snippet</h3>
+          <textarea id="out-css" spellcheck="false" placeholder=".root{…} .pixel{…}"></textarea>
+          <div class="btns">
+            <button id="copy-css">Copy CSS</button>
+          </div>
+        </div>
+
+        <div class="codebox">
+          <h3>FILE COMPLETO (incolla in un .html)</h3>
+          <textarea id="out-full" spellcheck="false" placeholder="Documento HTML completo"></textarea>
+          <div class="btns">
+            <button id="copy-full">Copy FULL HTML</button>
+            <button id="download">Download .html</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <canvas id="cnv"></canvas>
+  </main>
+
+<script>
+(() => {
+  const cnv = document.getElementById('cnv');
+  const ctx = cnv.getContext('2d');
+
+  const root = document.getElementById('root');
+  const status = document.getElementById('status');
+  const input = document.getElementById('input-file');
+  const maxSide = document.getElementById('max-side');
+
+  const outHTML = document.getElementById('out-html');
+  const outCSS  = document.getElementById('out-css');
+  const outFULL = document.getElementById('out-full');
+
+  const btnCopyHTML = document.getElementById('copy-html');
+  const btnCopyCSS  = document.getElementById('copy-css');
+  const btnCopyFULL = document.getElementById('copy-full');
+  const btnDownload = document.getElementById('download');
+
+  // NUOVO: pulsanti reset/nuova immagine
+  const btnReset = document.getElementById('reset');
+  const btnNew   = document.getElementById('new-image');
+
+  const img = new Image();
+  const reader = new FileReader();
+  let jobId = 0; // per abort vecchi job
+
+  const baseCss = ({w,h}) => `/* base rules */
+.root{position:relative;width:${w}px;height:${h}px}
+.pixel{position:absolute;width:1px;height:1px}
+`;
+
+  const fullHtmlDoc = ({w,h,markup,css}) => `<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Image as CSS Mosaic</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#111}
+${css}
+</style>
+</head>
+<body>
+<div class="root">
+${markup}
+</div>
+</body>
+</html>`;
+
+  async function copy(text, btn, label){
+    try{
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+      btn.textContent='Copied!'; setTimeout(()=> btn.textContent=label, 900);
+    }catch{ btn.textContent='Failed'; setTimeout(()=> btn.textContent=label, 900); }
+  }
+  btnCopyHTML.addEventListener('click', ()=> copy(outHTML.value, btnCopyHTML, 'Copy Snippet'));
+  btnCopyCSS .addEventListener('click', ()=> copy(outCSS.value , btnCopyCSS , 'Copy CSS'));
+  btnCopyFULL.addEventListener('click',()=> copy(outFULL.value, btnCopyFULL,'Copy FULL HTML'));
+
+  btnDownload.addEventListener('click', () => {
+    const blob = new Blob([outFULL.value], {type:'text/html;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'image-css-mosaic.html';
+    document.body.appendChild(a);
+    a.click(); a.remove(); URL.revokeObjectURL(a.href);
+  });
+
+  // ===== RESET WORKSPACE =====
+  function resetWorkspace(){
+    jobId++; // abort eventuali job in corso
+    root.innerHTML = '';
+    root.style.width = '';
+    root.style.height = '';
+    outHTML.value = '';
+    outCSS.value  = '';
+    outFULL.value = '';
+    input.value   = '';
+    ctx.clearRect(0,0,cnv.width,cnv.height);
+    cnv.width = cnv.height = 0;
+    status.textContent = 'Reset. Carica una nuova immagine.';
+  }
+  btnReset.addEventListener('click', resetWorkspace);
+  btnNew.addEventListener('click', ()=> { resetWorkspace(); input.click(); });
+
+  // ===== PIPELINE =====
+  input.addEventListener('change', () => {
+    if (!input.files?.[0]) return;
+    const thisJob = ++jobId;
+
+    reader.onload = async (e) => {
+      if (thisJob !== jobId) return;
+      img.src = e.target.result;
+
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+
+      // scala mantenendo proporzioni
+      const max = Math.max(10, parseInt(maxSide.value || 200, 10));
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w,h) > max) {
+        const s = max / Math.max(w,h);
+        w = Math.round(w*s); h = Math.round(h*s);
+      }
+
+      // canvas
+      cnv.width = w; cnv.height = h;
+      ctx.clearRect(0,0,w,h);
+      ctx.drawImage(img, 0, 0, w, h);
+
+      // reset UI
+      root.style.width = w+'px'; root.style.height = h+'px';
+      root.innerHTML = '';
+      outHTML.value = '';
+      outCSS.value  = baseCss({w,h});
+      outFULL.value = '';
+      status.textContent = 'Processing…';
+
+      // una sola lettura
+      const data = ctx.getImageData(0,0,w,h).data;
+      const frag = document.createDocumentFragment();
+      const parts = [];
+
+      const CHUNK = 8;
+      for (let y=0; y<h; y++){
+        const rowIdx = y*w*4;
+        for (let x=0; x<w; x++){
+          const i = rowIdx + x*4;
+          const r=data[i], g=data[i+1], b=data[i+2], a=(data[i+3]/255).toFixed(3);
+          const d = document.createElement('div');
+          d.className = 'pixel';
+          d.style.top  = y+'px';
+          d.style.left = x+'px';
+          d.style.backgroundColor = `rgba(${r},${g},${b},${a})`;
+          frag.appendChild(d);
+          parts.push(`<div class="pixel" style="top:${y}px;left:${x}px;background-color:rgba(${r},${g},${b},${a});"></div>`);
+        }
+        if (y % CHUNK === CHUNK-1){ await new Promise(r => requestAnimationFrame(r)); if (thisJob !== jobId) return; }
+      }
+
+      root.appendChild(frag);
+      status.textContent = `Done (${w}×${h}) — usa i pulsanti sotto`;
+
+      const snippet = `<div class="root">\n${parts.join('')}\n</div>`;
+      outHTML.value = snippet;
+      outFULL.value = fullHtmlDoc({w,h,markup:parts.join(''), css:baseCss({w,h})});
+    };
+
+    reader.readAsDataURL(input.files[0]);
+  });
+})();
+</script>
+</body>
+</html>
